@@ -2,13 +2,15 @@ from collections import deque
 import math
 import pathlib
 import random
+from re import L
+from tkinter.tix import TList
 import numpy as np
 
 class HMMModel:
     _EPSYLON = 0.0001
 
     
-    def __init__(self, training_data, heldout_data, training_data_tags, training_data_words, heldout_data_tags, heldout_data_words) -> None:
+    def __init__(self, training_data, unsupervised_training_data, heldout_data, training_data_tags, training_data_words, heldout_data_tags, heldout_data_words, case) -> None:
         self.tagset = set()
         for tag in training_data_tags:      
             self.tagset.add(tag)
@@ -20,6 +22,8 @@ class HMMModel:
         self.known_words = set()
         for word in training_data_words:      
             self.known_words.add(word)
+        self.wordset_size = len(self.known_words)
+        self.w_uniform_probability = 1/self.wordset_size
 
         self.w_unigram_amount = len(training_data_words)
         self.wt_bigram_amount = self.w_unigram_amount - 1
@@ -29,7 +33,7 @@ class HMMModel:
         self.t_trigram_amount = self.t_unigram_amount - 2
 
         self.tag_list = list(self.tagset)
-        self.add_unknown_words(training_data, training_data_words, self.known_words)
+        #self.add_unknown_words(training_data, training_data_words, self.known_words)
         self.word_list = list(self.known_words)
 
         self.tag_transition = np.zeros((self.tagset_size, self.tagset_size, self.tagset_size), dtype=float)
@@ -61,11 +65,32 @@ class HMMModel:
         self.move_counts(self.all_transitions, self.transition_probabilities)
         self.move_counts(self.all_emissions, self.emission_probabilities)
 
+        #if case == 'V':
         self.lambdas_transition = self.trigram_smoothing(heldout_data_tags, self._EPSYLON, self.t_unigram_prob, self.t_bigram_prob, self.transition_probabilities, self.t_uniform_probability)
         self.lambdas_emission = self.bigram_smoothing(heldout_data, self._EPSYLON, self.w_unigram_prob, self.emission_probabilities, self.t_uniform_probability)
 
         self.smoothed_transition_probabilities = self.smoothed_transition_probs(self.all_transitions, self.t_bigram_prob, self.t_unigram_prob, self.t_uniform_probability, self.lambdas_transition)
         self.smoothed_emission_probabilities = self.smoothed_emission_probs(self.all_emissions, self.w_unigram_prob, self.t_uniform_probability, self.lambdas_emission)
+
+        if case == 'BW':
+            for key in self.smoothed_transition_probabilities:
+                key_split = key.split(' ')
+                key_conditions = key_split[1].split(';')
+                tag1 = self.tag_list.index(key_conditions[0])
+                tag2 = self.tag_list.index(key_conditions[1])
+                tag3 = self.tag_list.index(key_split[0])
+                self.tag_transition[tag1, tag2, tag3] = self.smoothed_transition_probabilities[key]
+
+            for key in self.smoothed_emission_probabilities:
+                key_split = key.split(' ')
+                tag2 = self.word_list.index(key_split[0])
+                tag1 = self.tag_list.index(key_split[1])
+                self.word_emission[tag1, tag2] = self.smoothed_emission_probabilities[key]
+            
+            #self.alpha = self.forward(unsupervised_training_data)
+            #self.beta = self.backward(unsupervised_training_data)
+            trans, emis = self.baum_welch(unsupervised_training_data)
+
 
         for key in self.smoothed_transition_probabilities:
             key_split = key.split(' ')
@@ -83,7 +108,179 @@ class HMMModel:
 
         print("End")
 
+    def forward(self, train):
+        train_sequence = np.asarray(train)
+        transition_shape = self.tag_transition.shape[0]
+        train_shape = train_sequence.shape[0]
+        alpha = np.zeros((train_shape, transition_shape))
+        index = self.word_list.index(train_sequence[0])
+        if train_sequence[0] in self.word_list:
+            output_prob = self.word_emission[:, index]
+        else:
+            output_prob = 0
+        alpha[0, :] = self.initial_probabilities * output_prob
+ 
+        for t in range(1, train_shape):
+            for j in range(transition_shape):
+            # Matrix Computation Steps
+            #                  ((1x2) . (1x2))      *     (1)
+            #                        (1)            *     (1)
+                if train_sequence[t] in self.word_list:
+                    index_w = self.word_list.index(train_sequence[t])
+                    output_prob = self.word_emission[j, index_w]
+                else:
+                    output_prob = self.w_uniform_probability
+                product = np.dot(alpha[t-1,:],self.tag_transition[:, :, j])
+                sum = product.sum()
+                alpha[t, j] = sum * output_prob
+                #np.dot(alpha[t-1],self.tag_transition[:, j])
+                #probability = omega[t - 1,:] + np.log(self.tag_transition[:, :, j]) + log_emission
+ 
+        return alpha
+
+    def backward(self, train):
+        train_sequence = np.asarray(train)
+        transition_shape = self.tag_transition.shape[0]
+        train_shape = train_sequence.shape[0]
+        beta = np.zeros((train_shape, transition_shape))
+ 
+        # setting beta(T) = 1
+        beta[train_shape - 1] = np.ones((transition_shape))
+ 
+        # Loop in backward way from T-1 to
+        # Due to python indexing the actual loop will be T-2 to 0
+        for t in range(train_shape - 2, -1, -1):
+            for j in range(transition_shape):
+                if train_sequence[t+1] in self.word_list:
+                    index_w = self.word_list.index(train_sequence[t+1])
+                    output_prob = self.word_emission[:, index_w]
+                else:
+                    output_prob = self.w_uniform_probability
+                #product1 = np.dot(beta[t + 1],output_prob)
+                #product2 = np.dot(product1, self.tag_transition[:, :, j])
+                #sum = product2.sum()
+                #beta[t, j] = product2.sum()
+                #beta[t, j] = (beta[t + 1] * b[:, V[t + 1]]).dot(a[j, :])
+                product = (beta[t + 1] * output_prob).dot(self.tag_transition[:, :, j])
+                beta[t, j] = product.sum()
+        return beta
+
+    def baum_welch(self, train):
+        train_sequence = np.asarray(train)
+        M = self.tag_transition.shape[0]
+        T = len(train_sequence)
+ 
+        for n in range(100):
+            alpha = self.forward(train)
+            beta = self.backward(train)
+ 
+            xi = np.zeros((M, M, M, T - 2))
+            for t in range(T - 2):
+                #denominator = np.dot(np.dot(alpha[t, :].T, self.tag_transition) * self.word_emission[:, train_sequence[t + 1]].T, beta[t + 1, :])
+                if train_sequence[t+1] in self.word_list:
+                    index_w = self.word_list.index(train_sequence[t+1])
+                    output_prob = self.word_emission[:, index_w]
+                else:
+                    output_prob = self.w_uniform_probability
+                denominator = (alpha[t, :].T @ self.tag_transition * output_prob.T) @ beta[t + 1, :]
+                for i in range(M):
+                    numerator = alpha[t, i] * self.tag_transition[:, :, i] * output_prob.T * beta[t + 1, :].T
+                    xi[i, :, :, t] = numerator / denominator
+ 
+            gamma = np.sum(xi, axis=1)
+            self.tag_transition = np.sum(xi, 2) / np.sum(gamma, axis=1).reshape((-1, 1))
+ 
+            # Add additional T'th element in gamma
+            gamma = np.hstack((gamma, np.sum(xi[:, :, T - 2], axis=0).reshape((-1, 1))))
+ 
+            K = self.word_emission.shape[1]
+            denominator = np.sum(gamma, axis=1)
+            for l in range(K):
+                self.word_emission[:, l] = np.sum(gamma[:, train_sequence == l], axis=1)
+ 
+            self.word_emission = np.divide(self.word_emission, denominator.reshape((-1, 1)))
+ 
+        return {"transition":self.tag_transition, "emission":self.word_emission}
+
     def np_viterbi(self, test):
+        test_sequence = np.asarray(test)
+        T = test_sequence.shape[0]
+        M = self.tag_transition.shape[0]
+ 
+        #omega = np.zeros((T, M))
+        #omega = np.zeros((T, M, M))
+        omega = np.full((T, M, M), np.NINF, dtype=float)
+        index = self.word_list.index(test_sequence[0])
+        omega[0, :, :] = np.log(self.initial_probabilities * self.word_emission[:, index])
+
+        #prev = np.zeros((T - 1, M))
+        prev = np.zeros((T, M, M))
+        #prev = np.full((T, M), np.NINF, dtype=int)
+
+        for t in range(1, T):
+            for j in range(M):
+                    # Same as Forward Probability
+                    if test_sequence[t] in self.word_list:
+                        index_t = self.word_list.index(test_sequence[t])
+                        log_emission = np.log(self.word_emission[j, index_t])
+                    else:
+                        log_emission = self.w_uniform_probability #self.word_list.index('UNK')
+                    #probability = omega[t - 1,:] + np.log(self.tag_transition[:, :, j]) + log_emission
+                    probability =  omega[t - 1, :, :] + np.log(self.tag_transition[:, :, j]) + log_emission
+                    # This is our most probable state given previous state at time t (1)
+                    #tag1 = np.argmax(probability)
+                    index = np.unravel_index(probability.argmax(), probability.shape)
+                    tag1 = index[0]
+                    tag2 = index[1]
+                    #prev[t - 1, j] = tag2
+                    prev[t, tag2, j] = tag1
+ 
+                    # This is the probability of the most probable state (2)
+                    omega[t, tag2, j] = np.max(probability)
+ 
+        # Path Array
+        S = np.zeros(T,dtype=np.int)
+
+        # Find the most probable last hidden state
+        index = np.unravel_index(np.argmax(omega[T - 1, :, :]), omega[T - 1, :, :].shape)
+        l = index[0]
+        j = index[1]
+        last_state = j
+        before_last_state = l 
+
+        #last_state = np.argmax(omega[T - 1, :])
+ 
+        S[0] = last_state
+        S[1] = before_last_state
+
+        backtrack_index = 2
+        for i in range(T - 2, -1, -1):
+            if backtrack_index == T:
+                break
+            S[backtrack_index] = prev[i+1, int(before_last_state), int(last_state)]
+            last_state = before_last_state
+            before_last_state = S[backtrack_index]
+            backtrack_index += 1
+
+        #backtrack_index = 1
+        #for i in range(T - 1, -1, -1):
+        #    if backtrack_index == T:
+        #        break
+        #    S[backtrack_index] = prev[i, int(last_state)]
+        #    last_state = prev[i, int(last_state)]
+        #    backtrack_index += 1
+
+        # Flip the path array since we were backtracking
+        S = np.flip(S, axis=0)
+ 
+        # Convert numeric values to actual hidden states
+        result = []
+        for s in S:
+            result.append(self.tag_list[s])
+ 
+        return result
+
+    def bi_viterbi(self, test):
         test_sequence = np.asarray(test)
         T = test_sequence.shape[0]
         M = self.tag_transition.shape[0]
@@ -92,26 +289,25 @@ class HMMModel:
         #omega = np.zeros((T, M, M))
         omega = np.full((T, M), np.NINF, dtype=float)
         index = self.word_list.index(test_sequence[0])
-        #omega[0, :] = np.log(self.initial_probabilities * self.word_emission[:, index])
         omega[0, :] = np.log(self.initial_probabilities * self.word_emission[:, index])
 
         #prev = np.zeros((T - 1, M))
-        prev = np.zeros((T - 1, M))
-        prev = np.full((T - 1, M), np.NINF, dtype=int)
+        prev = np.zeros((T, M))
+        #prev = np.full((T, M), np.NINF, dtype=int)
 
         for t in range(1, T):
             for j in range(M):
                     # Same as Forward Probability
                     if test_sequence[t] in self.word_list:
                         index_t = self.word_list.index(test_sequence[t])
+                        log_emission = np.log(self.word_emission[j, index_t])
                     else:
-                        index_t = self.word_list.index('UNK')
-                    probability = omega[t - 1,:] + np.log(self.tag_transition[:, :, j]) + np.log(self.word_emission[j, index_t])
- 
+                        log_emission = self.w_uniform_probability #self.word_list.index('UNK')
+                    probability = omega[t - 1,:] + np.log(self.tag_transition[:, :, j]) + log_emission
                     # This is our most probable state given previous state at time t (1)
                     #tag1 = np.argmax(probability)
                     index = np.unravel_index(probability.argmax(), probability.shape)
-                    #tag1 = index[0]
+                    tag1 = index[0]
                     tag2 = index[1]
                     prev[t - 1, j] = tag2
  
@@ -125,30 +321,14 @@ class HMMModel:
         last_state = np.argmax(omega[T - 1, :])
  
         S[0] = last_state
- 
-        # Find the most probable last hidden state
-        #index = np.unravel_index(omega[T - 1, :, :].argmax(), omega[T - 1, :, :].shape)
-        #last_state = index[0] #np.argmax(omega[T - 1, :, :])
-        #prev_last_state = index[1]
-
-        #S[0] = last_state
-        #S[1] = prev_last_state
 
         backtrack_index = 1
-        for i in range(T - 2, -1, -1):
+        for i in range(T - 1, -1, -1):
+            if backtrack_index == T:
+                break
             S[backtrack_index] = prev[i, int(last_state)]
             last_state = prev[i, int(last_state)]
             backtrack_index += 1
-
-        '''
-        backtrack_index = 1
-        for i in range(T - 2, -1, -1):
-            S[backtrack_index] = prev[i, int(last_state), int(prev_last_state)]
-            temp = prev_last_state
-            prev_last_state = last_state
-            last_state = prev[i, int(last_state), int(temp)] 
-            backtrack_index += 1
-        '''
 
         # Flip the path array since we were backtracking
         S = np.flip(S, axis=0)
@@ -159,7 +339,7 @@ class HMMModel:
             result.append(self.tag_list[s])
  
         return result
-
+        
     def viterbi(self, test):
         bestpath = []
         viterbi = {}
@@ -396,8 +576,8 @@ class HMMModel:
         lambdas = [0.3, 0.3, 0.4]
         while 1:
             #for i in range(heldoutTextSize-2):
-            for i in range(1, heldout_text_size, 2):
-                new_bigram_key = list_of_heldout_data[i]+ ' ' + list_of_heldout_data[i-1]
+            for i in range(0, heldout_text_size, 2):
+                new_bigram_key = list_of_heldout_data[i]+ ' ' + list_of_heldout_data[i+1]
                 new_unigram_key = list_of_heldout_data[i]
                 if new_bigram_key in bigram_prob.keys():
                     biProb = bigram_prob[new_bigram_key]
@@ -418,8 +598,8 @@ class HMMModel:
                 expected_counts[0] = expected_counts[0] + lambdas[0]*uniform_prob/heldout_brigram_probs[key]
 
             # Compute expected counts for L1,L2
-            for i in range(1, heldout_text_size, 2):
-                bigram = list_of_heldout_data[i]+ ' ' + list_of_heldout_data[i-1]
+            for i in range(0, heldout_text_size, 2):
+                bigram = list_of_heldout_data[i]+ ' ' + list_of_heldout_data[i+1]
                 unigram = list_of_heldout_data[i]
                 if unigram in unigram_prob.keys():
                     expected_counts[1] = expected_counts[1] + lambdas[1]*unigram_prob[unigram]/heldout_brigram_probs[bigram]

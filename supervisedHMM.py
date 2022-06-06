@@ -20,6 +20,11 @@ class Dataset:
         self.words_test = self.cut_off_tags(testing)
         self.words_held = self.cut_off_tags(heldout)
 
+        self.supervised_train = self.text_train[:10000]
+        self.supervised_tags_train = self.cut_off_words(training[:10000])
+        self.supervised_words_train = self.cut_off_tags(training[:10000])
+        self.unsupervised_train = self.cut_off_tags(training)[10000:20000]
+
     def data_preparation(self, data):
         prep_data = []
         for line in data:
@@ -141,11 +146,13 @@ def main():
     
     dataset_cz = Dataset(training_cz, testing_cz, heldout_cz)
 
-    model = HMMModel(dataset_en.text_train, dataset_en.text_held, dataset_en.tags_train, dataset_en.words_train, dataset_en.tags_held, dataset_en.words_held)
+    supervised_model = HMMModel(dataset_en.text_train, dataset_en.words_train, dataset_en.text_held, dataset_en.tags_train, dataset_en.words_train, dataset_en.tags_held, dataset_en.words_held, 'V')
 
-    wordtest = dataset_en.words_test[:50]
-    tegtest = dataset_en.tags_test[:50]
-    bestpath = model.np_viterbi(wordtest)
+    #unsupervised_model = HMMModel(dataset_en.supervised_train, dataset_en.unsupervised_train, dataset_en.text_held, dataset_en.supervised_tags_train, dataset_en.supervised_words_train, dataset_en.tags_held, dataset_en.words_held, 'BW')
+
+    wordtest = dataset_en.words_test[:100]
+    tegtest = dataset_en.tags_test[:100]
+    bestpath = supervised_model.np_viterbi(wordtest)
 
     count = 0
 
