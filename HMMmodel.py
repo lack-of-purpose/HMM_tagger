@@ -3,14 +3,14 @@ import math
 import pathlib
 import random
 from re import L
-from tkinter.tix import TList
+import itertools
 import numpy as np
 
 class HMMModel:
-    _EPSYLON = 0.0001
+    _EPSYLON = 0.000001
 
     
-    def __init__(self, training_data, unsupervised_training_data, heldout_data, training_data_tags, training_data_words, heldout_data_tags, heldout_data_words, case) -> None:
+    def __init__(self, training_data, unsupervised_training_data, heldout_data, training_data_tags, training_data_words, heldout_data_tags, heldout_data_words, case) -> None: 
         self.tagset = set()
         for tag in training_data_tags:      
             self.tagset.add(tag)
@@ -26,7 +26,7 @@ class HMMModel:
         self.w_uniform_probability = 1/self.wordset_size
 
         self.w_unigram_amount = len(training_data_words)
-        self.wt_bigram_amount = self.w_unigram_amount - 1
+        self.wt_bigram_amount = self.w_unigram_amount
 
         self.t_unigram_amount = len(training_data_tags)
         self.t_bigram_amount = self.t_unigram_amount - 1
@@ -39,8 +39,9 @@ class HMMModel:
         self.tag_transition = np.zeros((self.tagset_size, self.tagset_size, self.tagset_size), dtype=float)
         self.word_emission = np.zeros((self.tagset_size, len(self.known_words)), dtype=float)
 
-        self.all_transitions = self.generate_all_possible_transitions(self.tag_list)
-        self.all_emissions = self.generate_all_possible_wordtag_pairs(self.tag_list, self.word_list)
+        #self.all_transitions = list(itertools.combinations(self.tag_list, 3))
+        #self.all_transitions = self.generate_all_possible_transitions(self.tag_list)
+        #self.all_emissions = self.generate_all_possible_wordtag_pairs(self.tag_list, self.word_list)
 
         #n-gram counts (tags and words/tags)
         self.t_unigram_en = self.t_unigram_count(training_data_tags, self.t_unigram_amount)
@@ -51,8 +52,11 @@ class HMMModel:
         self.wt_bigram_en = self.wt_bigram_count(training_data, self.wt_bigram_amount)
 
         # probabilities
-        self.transition_probabilities = self.transition_probs(self.t_trigram_en, self.t_bigram_en)
-        self.emission_probabilities = self.emission_probs(self.t_unigram_en, self.wt_bigram_en)
+        self.transition_probabilities = self.transition_probs(self.t_trigram_en, self.t_bigram_en, self.tag_list)
+        self.emission_probabilities = self.emission_probs(self.t_unigram_en, self.wt_bigram_en, self.tag_list, self.word_list)
+
+        #self.transition_probs(self.t_trigram_en, self.t_bigram_en, self.tag_list)
+        #self.emission_probs(self.t_unigram_en, self.wt_bigram_en, self.tag_list, self.word_list)
 
         self.w_unigram_prob =self.unigram_probabilities(self.w_unigram_en, self.w_unigram_amount)
 
@@ -60,51 +64,95 @@ class HMMModel:
 
         self.t_bigram_prob = self.bigram_probabilities(self.t_unigram_en, self.t_bigram_en)
 
+        self.tag_bigram_probs = np.zeros((self.tagset_size, self.tagset_size), dtype=float)
+        self.tag_unigram_probs = np.zeros((self.tagset_size), dtype=float)
+        self.word_unigram_probs = np.zeros((len(self.known_words)), dtype=float)
+
+        for key in self.t_bigram_prob:
+            key_split = key.split(' ')
+            tag1 = self.tag_list.index(key_split[0])
+            tag2 = self.tag_list.index(key_split[1])
+            self.tag_bigram_probs[tag2, tag1] = self.t_bigram_prob[key]
+        
+        for key in self.t_unigram_prob:
+            tag = self.tag_list.index(key)
+            self.tag_unigram_probs[tag] = self.t_unigram_prob[key]
+
+        for key in self.w_unigram_prob:
+            word = self.word_list.index(key)
+            self.word_unigram_probs[word] = self.w_unigram_prob[key]
+
+        #self.tag_unigrams = np.fromiter(self.t_unigram_prob.values, dtype=float)
+
         #self.t_trigram_prob = self.trigram_probabilities(self.t_trigram_en, self.t_bigram_en)
 
-        self.move_counts(self.all_transitions, self.transition_probabilities)
-        self.move_counts(self.all_emissions, self.emission_probabilities)
+        #self.move_counts(self.all_transitions, self.transition_probabilities)
+        #self.move_counts(self.all_emissions, self.emission_probabilities)
+
+
 
         #if case == 'V':
         self.lambdas_transition = self.trigram_smoothing(heldout_data_tags, self._EPSYLON, self.t_unigram_prob, self.t_bigram_prob, self.transition_probabilities, self.t_uniform_probability)
-        self.lambdas_emission = self.bigram_smoothing(heldout_data, self._EPSYLON, self.w_unigram_prob, self.emission_probabilities, self.t_uniform_probability)
+        self.lambdas_emission = self.bigram_smoothing(heldout_data_tags, heldout_data_words, self._EPSYLON, self.w_unigram_prob, self.emission_probabilities, self.w_uniform_probability)
 
-        self.smoothed_transition_probabilities = self.smoothed_transition_probs(self.all_transitions, self.t_bigram_prob, self.t_unigram_prob, self.t_uniform_probability, self.lambdas_transition)
-        self.smoothed_emission_probabilities = self.smoothed_emission_probs(self.all_emissions, self.w_unigram_prob, self.t_uniform_probability, self.lambdas_emission)
+        #self.lambdas_emission = [1.181759621716475e-13, 3.77674053343082e-06, 0.9999962232593484]
+
+        #self.cp_tag_transition = np.copy(self.tag_transition)
+
+        self.np_smoothed_transition_probs(self.tag_bigram_probs, self.tag_unigram_probs, self.t_uniform_probability, self.lambdas_transition, self.tag_list)
+        
+        #self.check_smooth_trans(self.transition_probabilities, self.t_bigram_prob, self.t_unigram_prob, self.t_uniform_probability, self.lambdas_transition, self.tag_list)
+        #self.check_smooth_emis(self.emission_probabilities, self.w_unigram_prob, self.w_uniform_probability, self.lambdas_emission, self.tag_list, self.word_list)
+        #difference = self.cp_tag_transition - self.tag_transition
+
+        #count = np.count_nonzero(difference)
+
+        #sum = np.sum(difference)
+        
+        #self.np_smoothed_emission_probs(self.w_unigram_prob, self.t_uniform_probability, self.lambdas_emission, self.tag_list, self.word_list)
+
+        self.np_smoothed_emission_probs(self.word_unigram_probs, self.w_uniform_probability, self.lambdas_emission, self.tag_list, self.word_list)
+        #self.check_smooth_emis(self.emission_probabilities, self.w_unigram_prob, self.w_uniform_probability, self.lambdas_emission, self.tag_list, self.word_list)
+
+        #count = np.count_nonzero(difference)
+        #self.smoothed_transition_probabilities = self.np_smoothed_transition_probs(self.tag_transition, self.transition_probabilities, self.t_bigram_prob, self.t_unigram_prob, self.t_uniform_probability, self.lambdas_transition, self.tag_list)
+        #self.smoothed_emission_probabilities = self.smoothed_emission_probs(self.word_emission, self.emission_probabilities, self.w_unigram_prob, self.t_uniform_probability, self.lambdas_emission)
+
+
 
         if case == 'BW':
-            for key in self.smoothed_transition_probabilities:
-                key_split = key.split(' ')
-                key_conditions = key_split[1].split(';')
-                tag1 = self.tag_list.index(key_conditions[0])
-                tag2 = self.tag_list.index(key_conditions[1])
-                tag3 = self.tag_list.index(key_split[0])
-                self.tag_transition[tag1, tag2, tag3] = self.smoothed_transition_probabilities[key]
+            #for key in self.smoothed_transition_probabilities:
+            #    key_split = key.split(' ')
+            #    key_conditions = key_split[1].split(';')
+            #    tag1 = self.tag_list.index(key_conditions[0])
+            #    tag2 = self.tag_list.index(key_conditions[1])
+            #    tag3 = self.tag_list.index(key_split[0])
+            #    self.tag_transition[tag1, tag2, tag3] = self.smoothed_transition_probabilities[key]
 
-            for key in self.smoothed_emission_probabilities:
-                key_split = key.split(' ')
-                tag2 = self.word_list.index(key_split[0])
-                tag1 = self.tag_list.index(key_split[1])
-                self.word_emission[tag1, tag2] = self.smoothed_emission_probabilities[key]
+            #for key in self.smoothed_emission_probabilities:
+            #    key_split = key.split(' ')
+            #    tag2 = self.word_list.index(key_split[0])
+            #    tag1 = self.tag_list.index(key_split[1])
+            #    self.word_emission[tag1, tag2] = self.smoothed_emission_probabilities[key]
             
             #self.alpha = self.forward(unsupervised_training_data)
             #self.beta = self.backward(unsupervised_training_data)
             trans, emis = self.baum_welch(unsupervised_training_data)
 
 
-        for key in self.smoothed_transition_probabilities:
-            key_split = key.split(' ')
-            key_conditions = key_split[1].split(';')
-            tag1 = self.tag_list.index(key_conditions[0])
-            tag2 = self.tag_list.index(key_conditions[1])
-            tag3 = self.tag_list.index(key_split[0])
-            self.tag_transition[tag1, tag2, tag3] = self.smoothed_transition_probabilities[key]
+        #for key in self.smoothed_transition_probabilities:
+        #    key_split = key.split(' ')
+        #    key_conditions = key_split[1].split(';')
+        #    tag1 = self.tag_list.index(key_conditions[0])
+        #    tag2 = self.tag_list.index(key_conditions[1])
+        #    tag3 = self.tag_list.index(key_split[0])
+       #    self.tag_transition[tag1, tag2, tag3] = self.smoothed_transition_probabilities[key]
 
-        for key in self.smoothed_emission_probabilities:
-            key_split = key.split(' ')
-            tag2 = self.word_list.index(key_split[0])
-            tag1 = self.tag_list.index(key_split[1])
-            self.word_emission[tag1, tag2] = self.smoothed_emission_probabilities[key]
+        #for key in self.smoothed_emission_probabilities:
+        #    key_split = key.split(' ')
+        #    tag2 = self.word_list.index(key_split[0])
+        #    tag1 = self.tag_list.index(key_split[1])
+        #    self.word_emission[tag1, tag2] = self.smoothed_emission_probabilities[key]
 
         print("End")
 
@@ -113,18 +161,16 @@ class HMMModel:
         transition_shape = self.tag_transition.shape[0]
         train_shape = train_sequence.shape[0]
         alpha = np.zeros((train_shape, transition_shape))
-        index = self.word_list.index(train_sequence[0])
         if train_sequence[0] in self.word_list:
+            index = self.word_list.index(train_sequence[0])
             output_prob = self.word_emission[:, index]
         else:
             output_prob = 0
         alpha[0, :] = self.initial_probabilities * output_prob
- 
+        norm = 0
+        
         for t in range(1, train_shape):
             for j in range(transition_shape):
-            # Matrix Computation Steps
-            #                  ((1x2) . (1x2))      *     (1)
-            #                        (1)            *     (1)
                 if train_sequence[t] in self.word_list:
                     index_w = self.word_list.index(train_sequence[t])
                     output_prob = self.word_emission[j, index_w]
@@ -135,10 +181,13 @@ class HMMModel:
                 alpha[t, j] = sum * output_prob
                 #np.dot(alpha[t-1],self.tag_transition[:, j])
                 #probability = omega[t - 1,:] + np.log(self.tag_transition[:, :, j]) + log_emission
+                norm += alpha[t, j]
+            alpha[t, :] = alpha[t, :]/norm
+            norm = 0
  
         return alpha
 
-    def backward(self, train):
+    def backward(self, train, alpha):
         train_sequence = np.asarray(train)
         transition_shape = self.tag_transition.shape[0]
         train_shape = train_sequence.shape[0]
@@ -146,7 +195,8 @@ class HMMModel:
  
         # setting beta(T) = 1
         beta[train_shape - 1] = np.ones((transition_shape))
- 
+
+        norm = 0
         # Loop in backward way from T-1 to
         # Due to python indexing the actual loop will be T-2 to 0
         for t in range(train_shape - 2, -1, -1):
@@ -161,8 +211,12 @@ class HMMModel:
                 #sum = product2.sum()
                 #beta[t, j] = product2.sum()
                 #beta[t, j] = (beta[t + 1] * b[:, V[t + 1]]).dot(a[j, :])
-                product = (beta[t + 1] * output_prob).dot(self.tag_transition[:, :, j])
-                beta[t, j] = product.sum()
+                mult = beta[t + 1] * output_prob
+                product = np.dot(mult,self.tag_transition[:, :, j])
+                beta[t, j] = np.sum(product)#/100000
+                norm += beta[t, j]
+            beta[t, :] = beta[t, :]/norm
+            norm = 0
         return beta
 
     def baum_welch(self, train):
@@ -172,7 +226,7 @@ class HMMModel:
  
         for n in range(100):
             alpha = self.forward(train)
-            beta = self.backward(train)
+            beta = self.backward(train, alpha)
  
             xi = np.zeros((M, M, M, T - 2))
             for t in range(T - 2):
@@ -182,10 +236,18 @@ class HMMModel:
                     output_prob = self.word_emission[:, index_w]
                 else:
                     output_prob = self.w_uniform_probability
-                denominator = (alpha[t, :].T @ self.tag_transition * output_prob.T) @ beta[t + 1, :]
+                denom1 = np.dot(alpha[t, :], self.tag_transition)
+                denom2 = np.dot(denom1, output_prob) 
+                denom3 = np.dot(denom2, beta[t+1, :])
+                denominator = np.sum(denom3)
+                #denominator = (alpha[t, :].T @ self.tag_transition * output_prob.T) @ beta[t + 1, :]
                 for i in range(M):
-                    numerator = alpha[t, i] * self.tag_transition[:, :, i] * output_prob.T * beta[t + 1, :].T
-                    xi[i, :, :, t] = numerator / denominator
+                    for j in range(M):
+                        num1 = np.dot(alpha[t, i], self.tag_transition[i, j, :])
+                        num2 = np.dot(num1, output_prob)
+                        numerator = np.dot(num2, beta[t+1, :])
+                        #numerator = alpha[t, i] * self.tag_transition[:, :, i] * output_prob.T * beta[t + 1, :].T
+                        xi[:, :, i, t] = numerator / denominator
  
             gamma = np.sum(xi, axis=1)
             self.tag_transition = np.sum(xi, 2) / np.sum(gamma, axis=1).reshape((-1, 1))
@@ -206,13 +268,16 @@ class HMMModel:
         test_sequence = np.asarray(test)
         T = test_sequence.shape[0]
         M = self.tag_transition.shape[0]
- 
         #omega = np.zeros((T, M))
         #omega = np.zeros((T, M, M))
         omega = np.full((T, M, M), np.NINF, dtype=float)
-        index = self.word_list.index(test_sequence[0])
-        omega[0, :, :] = np.log(self.initial_probabilities * self.word_emission[:, index])
-
+        #index = self.word_list.index(test_sequence[0])
+        if test_sequence[0] in self.word_list:
+            index_0 = self.word_list.index(test_sequence[0])
+            log_emission = self.word_emission[:, index_0]
+        else:
+            log_emission = self.w_uniform_probability
+        omega[0, :, :] = np.log(self.initial_probabilities * log_emission)
         #prev = np.zeros((T - 1, M))
         prev = np.zeros((T, M, M))
         #prev = np.full((T, M), np.NINF, dtype=int)
@@ -224,11 +289,10 @@ class HMMModel:
                         index_t = self.word_list.index(test_sequence[t])
                         log_emission = np.log(self.word_emission[j, index_t])
                     else:
-                        log_emission = self.w_uniform_probability #self.word_list.index('UNK')
+                        log_emission = np.log(self.w_uniform_probability) #self.word_list.index('UNK')
                     #probability = omega[t - 1,:] + np.log(self.tag_transition[:, :, j]) + log_emission
                     probability =  omega[t - 1, :, :] + np.log(self.tag_transition[:, :, j]) + log_emission
                     # This is our most probable state given previous state at time t (1)
-                    #tag1 = np.argmax(probability)
                     index = np.unravel_index(probability.argmax(), probability.shape)
                     tag1 = index[0]
                     tag2 = index[1]
@@ -339,7 +403,7 @@ class HMMModel:
             result.append(self.tag_list[s])
  
         return result
-        
+
     def viterbi(self, test):
         bestpath = []
         viterbi = {}
@@ -516,13 +580,13 @@ class HMMModel:
 
         return trigram_prob  
     
-    def generate_all_possible_transitions(self, tagset):
+    def generate_all_possible_transitions(self, taglist):
         all_transitions = {}
-        for tag in tagset:
+        for tag in taglist:
             #trigram = tag
-            for next_tag in tagset:
+            for next_tag in taglist:
                 #trigram = trigram + ' ' + next_tag
-                for last_tag in tagset:
+                for last_tag in taglist:
                     trigram = last_tag + ' ' + tag + ';' + next_tag
                     #trigram = trigram + ' ' + last_tag
                     all_transitions[trigram] = 0
@@ -545,48 +609,54 @@ class HMMModel:
 
         return all_emissions
 
-    def transition_probs(self, trigram_joint_count, bigram_joint_count):
-        trans_prob = {}
+    def transition_probs(self, trigram_joint_count, bigram_joint_count, taglist):
+        trans_probs = {}
         for key in trigram_joint_count:
             key_bigram = key.split(' ')
             bigram_joint_key = key_bigram[0]+ ' ' +key_bigram[1]
             probKey = key_bigram[2]+ ' ' + key_bigram[0]+ ';' + key_bigram[1]
             probValue = trigram_joint_count[key] / bigram_joint_count[bigram_joint_key]
-            trans_prob[probKey] = probValue
+            tag1 = taglist.index(key_bigram[0])
+            tag2 = taglist.index(key_bigram[1])
+            tag3 = taglist.index(key_bigram[2])
+            self.tag_transition[tag1, tag2, tag3] = probValue
+            trans_probs[probKey] = probValue
 
-        return trans_prob
+        return trans_probs
 
-    def emission_probs(self, t_unigram_cnt, wt_bigram_joint_count):
-        emission_prob = {}
+    def emission_probs(self, t_unigram_cnt, wt_bigram_joint_count, taglist, wordlist):
+        emis_probs = {}
         for key in wt_bigram_joint_count:
             key_bigram = key.split(' ')
             tag_key = key_bigram[1]
+            tag = taglist.index(key_bigram[1])
+            word = wordlist.index(key_bigram[0])
             probValue = wt_bigram_joint_count[key]/t_unigram_cnt[tag_key]
-            emission_prob[key] = probValue
-        return emission_prob
+            self.word_emission[tag, word] = probValue
+            emis_probs[key] = probValue
 
-    def move_counts(self, all_trans, ngram_joint_count):
-        for key in ngram_joint_count:
-            all_trans[key] = ngram_joint_count[key]
+        return emis_probs
 
-    def bigram_smoothing(self, list_of_heldout_data, epsylon, unigram_prob, bigram_prob, uniform_prob):
+    def bigram_smoothing(self, heldout_data_tags, heldout_data_words, epsylon, unigram_prob, bigram_prob, uniform_prob):
         heldout_brigram_probs = {}
-        heldout_text_size = len(list_of_heldout_data)
+        heldout_size = len(heldout_data_words)
         # Starting values of lambdas l0, l1, l2
         lambdas = [0.3, 0.3, 0.4]
         while 1:
             #for i in range(heldoutTextSize-2):
-            for i in range(0, heldout_text_size, 2):
-                new_bigram_key = list_of_heldout_data[i]+ ' ' + list_of_heldout_data[i+1]
-                new_unigram_key = list_of_heldout_data[i]
-                if new_bigram_key in bigram_prob.keys():
-                    biProb = bigram_prob[new_bigram_key]
-                else:
-                    biProb = 0
+            for i in range(0, heldout_size):
+                new_bigram_key = heldout_data_words[i]+ ' ' + heldout_data_tags[i]
+                new_unigram_key = heldout_data_words[i]
                 if new_unigram_key in unigram_prob.keys():
                     uniProb = unigram_prob[new_unigram_key]
                 else:
                     uniProb = 0
+                if new_bigram_key in bigram_prob.keys() and uniProb != 0:
+                    biProb = bigram_prob[new_bigram_key]
+                else:
+                    biProb = 0
+                if uniProb == 0:
+                    biProb = uniform_prob
                 new_bigram_prob = lambdas[2]*biProb + lambdas[1]*uniProb + lambdas[0]*uniform_prob
                 heldout_brigram_probs[new_bigram_key] = new_bigram_prob
 
@@ -594,13 +664,23 @@ class HMMModel:
             expected_counts = [0, 0, 0]
 
             # Compute expected counts for L0 
-            for key in heldout_brigram_probs:
-                expected_counts[0] = expected_counts[0] + lambdas[0]*uniform_prob/heldout_brigram_probs[key]
+            #for key in heldout_brigram_probs:
+            #    expected_counts[0] = expected_counts[0] + lambdas[0]*uniform_prob/heldout_brigram_probs[key]
 
             # Compute expected counts for L1,L2
-            for i in range(0, heldout_text_size, 2):
-                bigram = list_of_heldout_data[i]+ ' ' + list_of_heldout_data[i+1]
-                unigram = list_of_heldout_data[i]
+            #for key in heldout_brigram_probs:
+            #    unigram = key.split(' ')[0]
+            #    expected_counts[0] = expected_counts[0] + lambdas[0]*uniform_prob/heldout_brigram_probs[key]
+            #    if unigram in unigram_prob.keys():
+            #        expected_counts[1] = expected_counts[1] + lambdas[1]*unigram_prob[unigram]/heldout_brigram_probs[key]
+            #    if key in bigram_prob.keys():
+            #        expected_counts[2] = expected_counts[2] + lambdas[2]*bigram_prob[key]/heldout_brigram_probs[key]
+
+
+            for i in range(0, heldout_size):
+                bigram = heldout_data_words[i]+ ' ' + heldout_data_tags[i]
+                unigram = heldout_data_words[i]
+                expected_counts[0] = expected_counts[0] + lambdas[0]*uniform_prob/heldout_brigram_probs[bigram]
                 if unigram in unigram_prob.keys():
                     expected_counts[1] = expected_counts[1] + lambdas[1]*unigram_prob[unigram]/heldout_brigram_probs[bigram]
                 if bigram in bigram_prob.keys():
@@ -634,18 +714,22 @@ class HMMModel:
                 new_trigram_key = list_of_heldout_data[i]+ ' ' +list_of_heldout_data[i-2]+ ';' +list_of_heldout_data[i-1]
                 new_bigram_key = list_of_heldout_data[i]+ ' ' +list_of_heldout_data[i-1]
                 new_unigram_key = list_of_heldout_data[i]
-                if new_trigram_key in trigram_prob.keys():
-                    tri_prob = trigram_prob[new_trigram_key]
-                else:
-                    tri_prob = 0
-                if new_bigram_key in bigram_prob.keys():
-                    bi_prob = bigram_prob[new_bigram_key]
-                else:
-                    bi_prob = 0
                 if new_unigram_key in unigram_prob.keys():
                     uni_prob = unigram_prob[new_unigram_key]
                 else:
                     uni_prob = 0
+                if new_bigram_key in bigram_prob.keys():
+                    bi_prob = bigram_prob[new_bigram_key]
+                else:
+                    bi_prob = 0
+                if new_trigram_key in trigram_prob.keys():
+                    tri_prob = trigram_prob[new_trigram_key]
+                else:
+                    tri_prob = 0
+                if uni_prob == 0:
+                    bi_prob = uniform_prob
+                if bi_prob == 0:
+                    tri_prob = uniform_prob
                 new_trigram_prob = lambdas[3]*tri_prob + lambdas[2]*bi_prob + lambdas[1]*uni_prob + lambdas[0]*uniform_prob
                 heldout_trigram_probs[new_trigram_key] = new_trigram_prob
 
@@ -653,20 +737,34 @@ class HMMModel:
             expected_counts = [0, 0, 0, 0]
 
             # Compute expected counts for L0 
-            for key in heldout_trigram_probs:
-                expected_counts[0] = expected_counts[0] + lambdas[0]*uniform_prob/heldout_trigram_probs[key]
+            #for key in heldout_trigram_probs:
+            #    expected_counts[0] = expected_counts[0] + lambdas[0]*uniform_prob/heldout_trigram_probs[key]
 
-            # Compute expected counts for L1,L2,L3  
             for i in range(2,heldout_text_size):
                 trigram = list_of_heldout_data[i]+ ' ' +list_of_heldout_data[i-2]+ ';' +list_of_heldout_data[i-1]
                 bigram = list_of_heldout_data[i]+ ' ' +list_of_heldout_data[i-1]
                 unigram = list_of_heldout_data[i]
+                expected_counts[0] = expected_counts[0] + lambdas[0]*uniform_prob/heldout_trigram_probs[trigram]
                 if unigram in unigram_prob.keys():
                     expected_counts[1] = expected_counts[1] + lambdas[1]*unigram_prob[unigram]/heldout_trigram_probs[trigram]
                 if bigram in bigram_prob.keys():
                     expected_counts[2] = expected_counts[2] + lambdas[2]*bigram_prob[bigram]/heldout_trigram_probs[trigram]
                 if trigram in trigram_prob.keys():
+                #if trigram_prob[trigram] != 0:
                     expected_counts[3] = expected_counts[3] + lambdas[3]*trigram_prob[trigram]/heldout_trigram_probs[trigram]
+
+            # Compute expected counts for L1,L2,L3  
+            #for i in range(2,heldout_text_size):
+            #    trigram = list_of_heldout_data[i]+ ' ' +list_of_heldout_data[i-2]+ ';' +list_of_heldout_data[i-1]
+            #    bigram = list_of_heldout_data[i]+ ' ' +list_of_heldout_data[i-1]
+            #    unigram = list_of_heldout_data[i]
+            #    if unigram in unigram_prob.keys():
+            #        expected_counts[1] = expected_counts[1] + lambdas[1]*unigram_prob[unigram]/heldout_trigram_probs[trigram]
+            #    if bigram in bigram_prob.keys():
+            #        expected_counts[2] = expected_counts[2] + lambdas[2]*bigram_prob[bigram]/heldout_trigram_probs[trigram]
+            #    #if trigram in trigram_prob.keys():
+            #    if trigram_prob[trigram] != 0:
+            #        expected_counts[3] = expected_counts[3] + lambdas[3]*trigram_prob[trigram]/heldout_trigram_probs[trigram]
 
             # Compute next lambdas
             new_lambdas[0] = expected_counts[0]/(expected_counts[0]+expected_counts[1]+expected_counts[2]+expected_counts[3])
@@ -687,16 +785,7 @@ class HMMModel:
 
         return lambdas
 
-    def smoothed_transition_probs(self, all_trans, bigram_probs, unigram_probs, uniform_prob, lambdas):
-        all_uni_values = unigram_probs.values()
-        max_uni_value = max(all_uni_values)
-        sum_uni = sum(all_uni_values)
-        all_bi_values = bigram_probs.values()
-        max_bi_value = max(all_bi_values)
-        sum_bi = sum(all_bi_values)
-        all_tri_values = all_trans.values()
-        max_tri_value = max(all_tri_values)
-        sum_tri = sum(all_tri_values)
+    def smoothed_transition_probs(self, all_trans, trigram_probs, bigram_probs, unigram_probs, uniform_prob, lambdas):
         smoothed_trans_prob = {}
         for key in all_trans:
             key_split = key.split(' ') 
@@ -712,8 +801,54 @@ class HMMModel:
 
         return smoothed_trans_prob
 
-    def smoothed_emission_probs(self, all_emis, unigram_probs, uniform_prob, lambdas):
+    def np_smoothed_transition_probs(self, bigram_probs, unigram_probs, uniform_prob, lambdas, taglist):
+        for j in range(self.tagset_size):
+            bigram = np.copy(bigram_probs[:, j])
+            unigram = np.copy(unigram_probs[:])
+            self.tag_transition[:, j, :] = lambdas[3] * self.tag_transition[:, j, :] + lambdas[2] * bigram_probs[j, :] + lambdas[1] * unigram_probs[:] + lambdas[0]*uniform_prob 
+
+    def check_smooth_trans(self, trigram_probs, bigram_probs, unigram_probs, uniform_prob, lambdas, taglist):    
+        iterat = np.nditer(self.tag_transition, flags=['multi_index'], op_flags=['readwrite'])
+        for prob in iterat:
+            tag1 = taglist[iterat.multi_index[0]]
+            tag2 = taglist[iterat.multi_index[1]]
+            tag3 = taglist[iterat.multi_index[2]]
+            trigram_key = tag3 + ' ' + tag1 + ';' + tag2
+            bigram_key = tag3 + ' ' + tag2
+            unigram_key = tag3
+            if bigram_key in bigram_probs:
+                bigram_prob = bigram_probs[bigram_key]
+            else:
+                bigram_prob = 0
+            if trigram_key in trigram_probs:
+                trigram_prob = trigram_probs[trigram_key]
+            else:
+                trigram_prob = 0
+            prob_value = lambdas[3]*trigram_prob + lambdas[2]*bigram_prob + lambdas[1]*unigram_probs[unigram_key] + lambdas[0]*uniform_prob
+            self.tag_transition[iterat.multi_index] = prob_value
+
+    def np_smoothed_emission_probs(self, unigram_probs, uniform_prob, lambdas, taglist, wordlist):
+        unigram = np.copy(unigram_probs[:])
+        self.word_emission[:,:] = lambdas[2] * self.word_emission[:,:] + lambdas[1] * unigram_probs[:] + lambdas[0] * uniform_prob
+        
+    def check_smooth_emis(self, bigram_probs, unigram_probs, uniform_prob, lambdas, taglist, wordlist):
+        iterat = np.nditer(self.word_emission, flags=['multi_index'], op_flags=['readwrite'])
+        for prob in iterat:
+            tag = taglist[iterat.multi_index[0]]
+            word = wordlist[iterat.multi_index[1]]
+            bigram_key = word + ' ' + tag
+            unigram_key = word
+            if bigram_key in bigram_probs:
+                bigram_prob = bigram_probs[bigram_key]
+            else:
+                bigram_prob = 0
+            prob_value = lambdas[2]*bigram_prob + lambdas[1]*unigram_probs[unigram_key] + lambdas[0]*uniform_prob
+            self.word_emission[iterat.multi_index] = prob_value
+
+
+    def smoothed_emission_probs(self, all_emis, bigram_probs, unigram_probs, uniform_prob, lambdas):
         smoothed_emis_prob = {}
+        count = 0
         for key in all_emis:
             key_split = key.split(' ')
             unigram_key = key_split[0]

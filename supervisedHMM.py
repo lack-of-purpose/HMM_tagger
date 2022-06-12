@@ -146,21 +146,22 @@ def main():
     
     dataset_cz = Dataset(training_cz, testing_cz, heldout_cz)
 
-    supervised_model = HMMModel(dataset_en.text_train, dataset_en.words_train, dataset_en.text_held, dataset_en.tags_train, dataset_en.words_train, dataset_en.tags_held, dataset_en.words_held, 'V')
+    #supervised_model = HMMModel(dataset_en.text_train, dataset_en.words_train, dataset_en.text_held, dataset_en.tags_train, dataset_en.words_train, dataset_en.tags_held, dataset_en.words_held, 'V')
 
-    #unsupervised_model = HMMModel(dataset_en.supervised_train, dataset_en.unsupervised_train, dataset_en.text_held, dataset_en.supervised_tags_train, dataset_en.supervised_words_train, dataset_en.tags_held, dataset_en.words_held, 'BW')
+    #supervised_model = HMMModel(dataset_cz.text_train, dataset_cz.words_train, dataset_cz.text_held, dataset_cz.tags_train, dataset_cz.words_train, dataset_cz.tags_held, dataset_cz.words_held, 'V')
+    unsupervised_model = HMMModel(dataset_en.supervised_train, dataset_en.unsupervised_train, dataset_en.text_held, dataset_en.supervised_tags_train, dataset_en.supervised_words_train, dataset_en.tags_held, dataset_en.words_held, 'BW')
 
     wordtest = dataset_en.words_test[:100]
     tegtest = dataset_en.tags_test[:100]
-    bestpath = supervised_model.np_viterbi(wordtest)
+    #bestpath = supervised_model.np_viterbi(wordtest)
 
-    count = 0
+    #count = 0
 
-    for i in range(0, len(bestpath)):
-        if bestpath[i] == tegtest[i]:
-            count += 1
+    #for i in range(0, len(bestpath)):
+    #    if bestpath[i] == tegtest[i]:
+    #        count += 1
 
-    print(count)
+    #print(count/len(dataset_en.tags_test[:100]))
 
 
 
