@@ -5,6 +5,7 @@ import random
 import os
 import sys
 from HMMmodel import HMMModel
+from HMMModel2 import HMMModel as HMMModell
 
 class Dataset:
     def __init__(self, training, testing, heldout):
@@ -23,7 +24,7 @@ class Dataset:
         self.supervised_train = self.text_train[:10000]
         self.supervised_tags_train = self.cut_off_words(training[:10000])
         self.supervised_words_train = self.cut_off_tags(training[:10000])
-        self.unsupervised_train = self.cut_off_tags(training)[10000:20000]
+        self.unsupervised_train = self.cut_off_tags(training)[10000:15000]
 
     def data_preparation(self, data):
         prep_data = []
@@ -148,20 +149,31 @@ def main():
 
     #supervised_model = HMMModel(dataset_en.text_train, dataset_en.words_train, dataset_en.text_held, dataset_en.tags_train, dataset_en.words_train, dataset_en.tags_held, dataset_en.words_held, 'V')
 
-    #supervised_model = HMMModel(dataset_cz.text_train, dataset_cz.words_train, dataset_cz.text_held, dataset_cz.tags_train, dataset_cz.words_train, dataset_cz.tags_held, dataset_cz.words_held, 'V')
-    unsupervised_model = HMMModel(dataset_en.supervised_train, dataset_en.unsupervised_train, dataset_en.text_held, dataset_en.supervised_tags_train, dataset_en.supervised_words_train, dataset_en.tags_held, dataset_en.words_held, 'BW')
+    supervised_model = HMMModel(dataset_cz.text_train, dataset_cz.words_train, dataset_cz.text_held, dataset_cz.tags_train, dataset_cz.words_train, dataset_cz.tags_held, dataset_cz.words_held, 'V')
+    #unsupervised_model = HMMModel(dataset_en.supervised_train, dataset_en.unsupervised_train, dataset_en.text_held, dataset_en.supervised_tags_train, dataset_en.supervised_words_train, dataset_en.tags_held, dataset_en.words_held, 'BW')
 
-    wordtest = dataset_en.words_test[:100]
-    tegtest = dataset_en.tags_test[:100]
-    #bestpath = supervised_model.np_viterbi(wordtest)
+    #unsupervised_model = HMMModel(dataset_cz.supervised_train, dataset_cz.unsupervised_train, dataset_cz.text_held, dataset_cz.supervised_tags_train, dataset_cz.supervised_words_train, dataset_cz.tags_held, dataset_cz.words_held, 'BW')
+
+    wordtest = dataset_cz.words_test[20000:30000]
+    tagtest = dataset_cz.tags_test[20000:30000]
+    #bestpath1 = supervised_model.np_viterbi(wordtest)
+    bestpath2 = supervised_model.pruned_viterbi(wordtest)
 
     #count = 0
 
-    #for i in range(0, len(bestpath)):
-    #    if bestpath[i] == tegtest[i]:
+    #for i in range(0, len(bestpath1)):
+    #    if bestpath1[i] == tagtest[i]:
     #        count += 1
 
     #print(count/len(dataset_en.tags_test[:100]))
+
+    count = 0
+
+    for i in range(0, len(bestpath2)):
+        if bestpath2[i] == tagtest[i]:
+            count += 1
+
+    print(count/len(dataset_cz.tags_test[20000:30000]))
 
 
 
