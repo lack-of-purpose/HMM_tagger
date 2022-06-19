@@ -1,34 +1,30 @@
-from collections import deque
+#from collections import deque
 import math
-import pathlib
-import random
-from re import L
-import itertools
+#import pathlib
+#import random
+#from re import L
+#import itertools
 import numpy as np
-import scipy as sc
-import time 
+#import scipy as sc
+#import time 
 
 class HMMModel:
     _EPSYLON = 0.000001
 
-    
-    def __init__(self, training_data, unsupervised_training_data, heldout_data, training_data_tags, training_data_words, heldout_data_tags, heldout_data_words, case) -> None: 
+    #Initialize a model. Last parameter "case" has 2 values: V or BW(to call Baum-Welch in case of unsupervised model)
+    def __init__(self, training_data, unsupervised_training_data, training_data_tags, training_data_words, heldout_data_tags, heldout_data_words, language, case) -> None: 
+        
+        #Create set of tags 
         self.tagset = set()
         for tag in training_data_tags:      
             self.tagset.add(tag)
-        self.tagset_size = len(self.tagset)
-        self.t_uniform_probability = 1/self.tagset_size
 
-        #self.add_unknown_words(training_data, training_data_tags, self.tagset)
-
-        
-
+        #Create set of words 
         self.known_words = set()
         for word in training_data_words:      
             self.known_words.add(word)
-        self.wordset_size = len(self.known_words)
-        self.w_uniform_probability = 1/self.wordset_size
 
+        #Amount of unigrams, bigrams, trigrams
         self.w_unigram_amount = len(training_data_words)
         self.wt_bigram_amount = self.w_unigram_amount
 
@@ -36,48 +32,46 @@ class HMMModel:
         self.t_bigram_amount = self.t_unigram_amount - 1
         self.t_trigram_amount = self.t_unigram_amount - 2
 
-        self.add_unknown_words(training_data, training_data_tags, self.tagset)
-        self.tagset_size = len(self.tagset)
+        self.remove_rare_tags(training_data, training_data_tags, self.tagset, language)
 
+        #Calculate uniform probability for tags and words
+        self.tagset_size = len(self.tagset)
+        self.t_uniform_probability = 1/self.tagset_size
+        self.wordset_size = len(self.known_words)
+        self.w_uniform_probability = 1/self.wordset_size
+
+        #Uniform initial probabilities for the beginning of test set
         self.initial_probabilities = np.full(self.tagset_size, self.t_uniform_probability, dtype=float)
 
+        #Convert tag set and word set to lists
         self.tag_list = list(self.tagset)
-        #self.add_unknown_words(training_data, training_data_words, self.known_words)
         self.word_list = list(self.known_words)
 
+        #Create 3d matrix for tag transitions and 2d matrix for word emissions
         self.tag_transition = np.zeros((self.tagset_size, self.tagset_size, self.tagset_size), dtype=float)
         self.word_emission = np.zeros((self.tagset_size, len(self.known_words)), dtype=float)
 
-        #self.all_transitions = list(itertools.combinations(self.tag_list, 3))
-        #self.all_transitions = self.generate_all_possible_transitions(self.tag_list)
-        #self.all_emissions = self.generate_all_possible_wordtag_pairs(self.tag_list, self.word_list)
-
-        count = 0
-        #n-gram counts (tags and words/tags)
+        #n-gram counts (tags) and words/tags)
         self.t_unigram_en = self.t_unigram_count(training_data_tags, self.t_unigram_amount)
-        for key in self.t_unigram_en:
-            if self.t_unigram_en[key] <= 5:
-                count += 1
-        
         self.t_bigram_en = self.t_bigram_count(training_data_tags, self.t_bigram_amount)
         self.t_trigram_en = self.t_trigram_count(training_data_tags, self.t_trigram_amount)
-
+        
+        #unigram counts (words)
         self.w_unigram_en = self.t_unigram_count(training_data_words, self.t_unigram_amount)
+
+        #bigram counts (word+tags)
         self.wt_bigram_en = self.wt_bigram_count(training_data, self.wt_bigram_amount)
 
-        # probabilities
+        #Compute transition and emission probabilities for training set and add values to tag transition and word emission matrices
         self.transition_probabilities = self.transition_probs(self.t_trigram_en, self.t_bigram_en, self.tag_list)
         self.emission_probabilities = self.emission_probs(self.t_unigram_en, self.wt_bigram_en, self.tag_list, self.word_list)
 
-        #self.transition_probs(self.t_trigram_en, self.t_bigram_en, self.tag_list)
-        #self.emission_probs(self.t_unigram_en, self.wt_bigram_en, self.tag_list, self.word_list)
-
+        #Compute n-gram probabilities
         self.w_unigram_prob =self.unigram_probabilities(self.w_unigram_en, self.w_unigram_amount)
-
         self.t_unigram_prob = self.unigram_probabilities(self.t_unigram_en, self.t_unigram_amount)
-
         self.t_bigram_prob = self.bigram_probabilities(self.t_unigram_en, self.t_bigram_en)
 
+        #Convert n-gram probabilities to numpy structures
         self.tag_bigram_probs = np.zeros((self.tagset_size, self.tagset_size), dtype=float)
         self.tag_unigram_probs = np.zeros((self.tagset_size), dtype=float)
         self.word_unigram_probs = np.zeros((len(self.known_words)), dtype=float)
@@ -96,78 +90,55 @@ class HMMModel:
             word = self.word_list.index(key)
             self.word_unigram_probs[word] = self.w_unigram_prob[key]
 
-        #self.tag_unigrams = np.fromiter(self.t_unigram_prob.values, dtype=float)
-
-        #self.t_trigram_prob = self.trigram_probabilities(self.t_trigram_en, self.t_bigram_en)
-
-        #self.move_counts(self.all_transitions, self.transition_probabilities)
-        #self.move_counts(self.all_emissions, self.emission_probabilities)
-
-
-
-        #if case == 'V':
+        #Compute lambdas for transition and emission models smoothing
         self.lambdas_transition = self.trigram_smoothing(heldout_data_tags, self._EPSYLON, self.t_unigram_prob, self.t_bigram_prob, self.transition_probabilities, self.t_uniform_probability)
         self.lambdas_emission = self.bigram_smoothing(heldout_data_tags, heldout_data_words, self._EPSYLON, self.w_unigram_prob, self.emission_probabilities, self.w_uniform_probability)
 
-        #self.lambdas_emission = [1.181759621716475e-13, 3.77674053343082e-06, 0.9999962232593484]
-
-        #self.cp_tag_transition = np.copy(self.tag_transition)
-
+        #Smooth tag transition matrix 
         self.np_smoothed_transition_probs(self.tag_bigram_probs, self.tag_unigram_probs, self.t_uniform_probability, self.lambdas_transition, self.tag_list)
-        #self.check_smooth_trans(self.transition_probabilities, self.t_bigram_prob, self.t_unigram_prob, self.t_uniform_probability, self.lambdas_transition, self.tag_list)
-        #self.check_smooth_emis(self.emission_probabilities, self.w_unigram_prob, self.w_uniform_probability, self.lambdas_emission, self.tag_list, self.word_list)
-        #difference = self.cp_tag_transition - self.tag_transition
 
-        #count = np.count_nonzero(difference)
-
-        #sum = np.sum(difference)
-        
-        #self.np_smoothed_emission_probs(self.w_unigram_prob, self.t_uniform_probability, self.lambdas_emission, self.tag_list, self.word_list)
-
+        #Smooth word emission matrix
         self.np_smoothed_emission_probs(self.word_unigram_probs, self.w_uniform_probability, self.lambdas_emission, self.tag_list, self.word_list)
-        #self.check_smooth_emis(self.emission_probabilities, self.w_unigram_prob, self.w_uniform_probability, self.lambdas_emission, self.tag_list, self.word_list)
-
-        #count = np.count_nonzero(difference)
-        #self.smoothed_transition_probabilities = self.np_smoothed_transition_probs(self.tag_transition, self.transition_probabilities, self.t_bigram_prob, self.t_unigram_prob, self.t_uniform_probability, self.lambdas_transition, self.tag_list)
-        #self.smoothed_emission_probabilities = self.smoothed_emission_probs(self.word_emission, self.emission_probabilities, self.w_unigram_prob, self.t_uniform_probability, self.lambdas_emission)
 
 
+        print("Precomputation done")
 
+        #Update tag transitions and word emissions with Baum-Welch. Due to enormous memory consumption
+        #it cannot be done on whole training dataset, so it is done in cycle (dataset part length = 10000 on each iteration for english)
+        #and then average is taken. (ensemble)
         if case == 'BW':
-            #for key in self.smoothed_transition_probabilities:
-            #    key_split = key.split(' ')
-            #    key_conditions = key_split[1].split(';')
-            #    tag1 = self.tag_list.index(key_conditions[0])
-            #    tag2 = self.tag_list.index(key_conditions[1])
-            #    tag3 = self.tag_list.index(key_split[0])
-            #    self.tag_transition[tag1, tag2, tag3] = self.smoothed_transition_probabilities[key]
+            #New structures for ensemble
+            self.ensemble_tag_transition = np.zeros((self.tagset_size, self.tagset_size, self.tagset_size), dtype=float)
+            self.ensemble_word_emission = np.zeros((self.tagset_size, len(self.known_words)), dtype=float)
+            #copy of initial transition and emission models
+            cp_tag_transition = np.copy(self.tag_transition)
+            cp_word_emission = np.copy(self.word_emission)
+            self.new_baum_welch(unsupervised_training_data[:5000])
+            print("BW")
+            self.ensemble_tag_transition += self.tag_transition
+            self.ensemble_word_emission += self.word_emission
+            self.tag_transition = np.copy(cp_tag_transition)
+            self.word_emission = np.copy(cp_word_emission)
+            i = 5000
+            j = 10000
+            while i <= 165000 and j <= 170000:
+                self.new_baum_welch(unsupervised_training_data[i:j])
+                print("BW")
+                self.ensemble_tag_transition += self.tag_transition
+                self.ensemble_word_emission += self.word_emission
+                self.tag_transition = np.copy(cp_tag_transition)
+                self.word_emission = np.copy(cp_word_emission)
+                i = j
+                j += 5000
+            #Taking average of updated transition and emission models
+            self.tag_transition = self.ensemble_tag_transition / 34
+            self.word_emission = self.ensemble_word_emission / 34
 
-            #for key in self.smoothed_emission_probabilities:
-            #    key_split = key.split(' ')
-            #    tag2 = self.word_list.index(key_split[0])
-            #    tag1 = self.tag_list.index(key_split[1])
-            #    self.word_emission[tag1, tag2] = self.smoothed_emission_probabilities[key]
-            
-            #self.alpha = self.forward(unsupervised_training_data)
-            #self.beta = self.backward(unsupervised_training_data)
-            trans, emis = self.baum_welch(unsupervised_training_data)
+            #smoothing
+            self.np_smoothed_transition_probs(self.tag_bigram_probs, self.tag_unigram_probs, self.t_uniform_probability, self.lambdas_transition, self.tag_list)
+            self.np_smoothed_emission_probs(self.word_unigram_probs, self.w_uniform_probability, self.lambdas_emission, self.tag_list, self.word_list)
 
-
-        #for key in self.smoothed_transition_probabilities:
-        #    key_split = key.split(' ')
-        #    key_conditions = key_split[1].split(';')
-        #    tag1 = self.tag_list.index(key_conditions[0])
-        #    tag2 = self.tag_list.index(key_conditions[1])
-        #    tag3 = self.tag_list.index(key_split[0])
-       #    self.tag_transition[tag1, tag2, tag3] = self.smoothed_transition_probabilities[key]
-
-        #for key in self.smoothed_emission_probabilities:
-        #    key_split = key.split(' ')
-        #    tag2 = self.word_list.index(key_split[0])
-        #    tag1 = self.tag_list.index(key_split[1])
-        #    self.word_emission[tag1, tag2] = self.smoothed_emission_probabilities[key]
-
-        print("End")
+        print("Model initialization done")
 
     def new_forward(self, train):
         train_sequence = np.asarray(train)
@@ -373,6 +344,112 @@ class HMMModel:
             self.word_emission = np.divide(self.word_emission, denominator.reshape((-1, 1)))
  
         return {"transition":self.tag_transition, "emission":self.word_emission}
+
+
+    def new_baum_welch(self, train):
+            alpha_1 = np.zeros((self.tagset_size, self.tagset_size), dtype=float)
+            alpha_1 += 1/((self.tagset_size))
+
+            beta_last = np.ones((self.tagset_size, self.tagset_size), dtype=float)
+
+            word_uniform = np.ones((self.tagset_size), dtype=float)/self.tagset_size
+
+            words_dict = {}  # Create word dictionary to access words faster
+            for i in range(0,len(self.word_list)):  
+                words_dict[self.word_list[i]]=i  
+
+            words_training_dict ={}  #Create word dictionary for word emission updates
+            for i in range(0,len(train)):
+                if train[i] in words_training_dict:
+                    words_training_dict[train[i]].append(i)
+                else:
+                    words_training_dict[train[i]] = [i]
+
+            a_conv = 100
+            b_conv = 100
+
+            while a_conv > 15 and b_conv > 0.0005:  #convergence condition
+            #for p in range(0,10): #convergence 
+                alpha = [alpha_1]
+                beta = [None] * len(train)
+                beta[len(train)-1] = beta_last
+
+                #Alpha computation
+                for w in range(1,len(train)):
+                    a = np.zeros((self.tagset_size, self.tagset_size), dtype=float)
+                    b = []
+                    if train[w] in words_dict:
+                        b = self.word_emission[:,words_dict[train[w]]]
+                    else:
+                        b = word_uniform
+
+                    for k in range(0,self.tagset_size):
+                        a[:,k] = np.sum(np.multiply(self.tag_transition[:,:,k],alpha[w-1]),0) * b[k]
+                    a = a/np.sum(a, 0)
+                    alpha.append(a)
+
+                #beta
+                for w in range(1,len(train)):
+                    b_back = []
+                    bet = np.zeros((self.tagset_size, self.tagset_size), dtype=float)
+                    if train[len(train)-w-1] in words_dict:
+                        b_back = self.word_emission[:,words_dict[train[len(train)-w-1]]]
+                    else:
+                        b_back = word_uniform
+
+                    for i in range(0,self.tagset_size):
+                            bet[i,:] = np.sum(np.multiply(np.multiply(beta[len(train)-w],b_back), self.tag_transition[i,:,:]),1)
+                    bet = bet/np.sum(bet, 0)
+                    beta[len(train)-w-1] = bet
+        
+                gamma = np.multiply(alpha,beta)
+                sum_list = np.sum(np.sum(gamma,1),1)
+                for i in range(0,len(alpha)):
+                    gamma[i] = gamma[i]/sum_list[i]
+
+                xis = [] 
+                for w in range(0,len(alpha)-1):
+                    xi = np.zeros((self.tagset_size, self.tagset_size, self.tagset_size), dtype=float)
+                    #numerator
+                    b = []
+                    if train[w+1] in words_dict:
+                        b = self.word_emission[:,words_dict[train[w+1]]]
+                    else:
+                        b = word_uniform
+                
+                    step_1 = np.multiply(self.tag_transition, alpha[w]) #a..k*alpha
+                    step_2 = np.multiply(beta[w+1],b)
+                    for i in range(0,self.tagset_size):
+                        xi[i,:,:] = np.multiply(step_1[i,:,],step_2)
+
+                    denominator = np.sum(xi)
+
+                    xi = xi /denominator
+
+                    xis.append(xi)
+        
+                cube_sum = np.sum(xis,0)
+                k_sum = np.sum(cube_sum, 2)
+                update_a = np.zeros((self.tagset_size, self.tagset_size, self.tagset_size), dtype=float)
+
+                for k in range(0,self.tagset_size):
+                    update_a[:,:,k] = cube_sum[:,:,k]/k_sum
+
+                b_update = np.zeros((self.tagset_size, len(self.word_list)), dtype=float)
+                denominator_gamma = np.sum(np.sum(gamma,0),1)
+                for i in range(0,len(self.word_list)):
+                    if self.word_list[i] in words_training_dict:
+                        b_update[:,i] = np.divide(np.sum(np.sum(gamma[words_training_dict[self.word_list[i]]],0),1),denominator_gamma)
+                    else:
+                        b_update[:,i] = np.ones((self.tagset_size),dtype=float)/len(self.word_list)
+        
+
+                a_conv = np.sum(np.abs(self.tag_transition - update_a))  #15
+                self.tag_transition = update_a
+                b_conv = np.sum(np.abs(self.word_emission - b_update))   #0.0005
+                self.word_emission = b_update
+                print("a convergence:" + str(a_conv))
+                print("b convergence:" + str(b_conv))
 
     def np_viterbi(self, test):
         test_sequence = np.asarray(test)
@@ -608,16 +685,20 @@ class HMMModel:
  
         return result
 
-    def add_unknown_words(self, training_data, training_data_words, known_words):
-        unigrams = self.t_unigram_count(training_data_words, self.t_unigram_amount)
+    def remove_rare_tags(self, training_data, training_data_tags, tagset, language):
+        if language == 'CZ':
+            n = 30
+        else: 
+            n = 10
+        unigrams = self.t_unigram_count(training_data_tags, self.t_unigram_amount)
         count = 0
-        known_words.add('UNK')
-        for word in training_data_words:
-            if unigrams[word] <= 10:
-                training_data_words[count] = 'UNK'
+        tagset.add('UNK')
+        for word in training_data_tags:
+            if unigrams[word] <= n:
+                training_data_tags[count] = 'UNK'
                 training_data[count*2 + 1] = 'UNK'
-                if word in known_words:
-                    known_words.remove(word)
+                if word in tagset:
+                    tagset.remove(word)
                 if word in self.tagset:
                     self.tagset.remove(word)
             count += 1

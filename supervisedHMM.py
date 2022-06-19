@@ -21,10 +21,10 @@ class Dataset:
         self.words_test = self.cut_off_tags(testing)
         self.words_held = self.cut_off_tags(heldout)
 
-        self.supervised_train = self.text_train[:10000]
-        self.supervised_tags_train = self.cut_off_words(training[:10000])
-        self.supervised_words_train = self.cut_off_tags(training[:10000])
-        self.unsupervised_train = self.cut_off_tags(training)[10000:15000]
+        self.supervised_train = self.text_train[:20000]
+        self.supervised_tags_train = self.tags_train[:10000]
+        self.supervised_words_train = self.words_train[:10000]
+        self.unsupervised_train = self.cut_off_tags(training)[10000:]
 
     def data_preparation(self, data):
         prep_data = []
@@ -69,77 +69,44 @@ def data_split(text):
 
     return training, testing, heldout
 
-def get_tagset(i, tagset):
-    if i == 0 or i == -1:
-        return ['st']
-    else:
-        return tagset
+def supervised_model(dataset, test_size, language):
+    #Create supervised HMM model
+    supervised_model = HMMModel(dataset.text_train, dataset.words_train, dataset.tags_train, dataset.words_train, dataset.tags_held, dataset.words_held, language, 'V')
 
-def viterbi(test, transition, emission, tagset, known_words):
-    v_t = {}
-    backpointers = {}
-    tags = []
-    #test.insert(0,'.')
-    length = len(test)
-    start_tag = 'st'
-    max = 0
-    for tag in tags:
-        key = tag + ' ' + '.;###'
-        max_prob = transition.get(key, 0)
-        if max_prob > max:
-            max = max_prob
-    v_t[(0, start_tag, start_tag)] = 1
-    for n in range(1, length+1):
-        for tag1 in get_tagset(n-1, tagset):
-            for tag2 in get_tagset(n, tagset):
-                max = float("-Inf")
-                m_tag = None
-                for tag3 in get_tagset(n-2, tagset):
-                    trans_key = tag2 + ' ' + tag3 + ';' + tag1
-                    emis_key = test[n-1] + ' ' + tag2
-                    if emission.get(emis_key, 0) != 0:
-                        interim_pi = v_t.get((n-1, tag3, tag1), -10)*transition.get(trans_key, -10)*emission.get(emis_key, -10)
-                        if interim_pi > max:
-                            max = interim_pi
-                            m_tag = tag3
-                v_t[(n, tag1, tag2)] = max
-                backpointers[(n, tag1, tag2)] = m_tag
+    wordtest = dataset.words_test[:test_size]
+    tagtest = dataset.tags_test[:test_size]
+    best_path = supervised_model.pruned_viterbi(wordtest)
 
-    max = -float("inf")
-    m_tag1 = None
-    m_tag2 = None
-    for tag1 in tagset:
-        for tag2 in tagset:
-            trans_key = '.' + ' ' + tag1 + ';' + tag2
-            inter = v_t.get((length, tag1, tag2), -10)*transition.get(trans_key, -10)
-            if inter > max:
-                max = inter
-                m_tag1 = tag1
-                m_tag2 = tag2
-    seq_tags = deque()
-    seq_tags.append(m_tag2)
-    seq_tags.append(m_tag1)
-    for i, n in enumerate(range(length-2, 0, -1)):
-        seq_tags.append[backpointers[(n+2, seq_tags[i+1], seq_tags[i])]]
-    seq_tags.reverse()
+    count = 0
 
-    sentence = deque()
-    for i in range(0, length):
-        sentence.append(test[i] + '/' + seq_tags[i])
-    sentence.append('\n')
-    tagged = []
-    tagged.append(' '.join(sentence))
-    return tagged
+    for i in range(0, len(best_path)):
+        if best_path[i] == tagtest[i]:
+            count += 1
+
+    print(count/len(tagtest))
+
+def unsupervised_model(dataset, test_size, language):
+    unsupervised_model = HMMModel(dataset.supervised_train, dataset.unsupervised_train, dataset.supervised_tags_train, dataset.supervised_words_train, dataset.tags_held, dataset.words_held, language, 'BW')
+
+    wordtest = dataset.words_test[:test_size]
+    tagtest = dataset.tags_test[:test_size]
+    best_path = unsupervised_model.pruned_viterbi(wordtest)
+
+    count = 0
+
+    for i in range(0, len(best_path)):
+        if best_path[i] == tagtest[i]:
+            count += 1
+
+    print(count/len(tagtest))
 
 def main():
     # Create lists from files
     with open(os.path.join(sys.path[0], "TEXTEN2.ptg.txt"), "r") as ff:
         english = ff.readlines()
-    #english = open("TEXTEN2.ptg.txt").readlines()
     training_en, testing_en, heldout_en = data_split(english)
 
     with open(os.path.join(sys.path[0], "TEXTCZ2.ptg.txt"), encoding="ISO-8859-2") as f:
-    #with open("TEXTCZ2.ptg.txt", encoding="ISO-8859-2") as f:
         czech = f.readlines()
     training_cz, testing_cz,  heldout_cz = data_split(czech)
 
@@ -147,40 +114,21 @@ def main():
     
     dataset_cz = Dataset(training_cz, testing_cz, heldout_cz)
 
-    #supervised_model = HMMModel(dataset_en.text_train, dataset_en.words_train, dataset_en.text_held, dataset_en.tags_train, dataset_en.words_train, dataset_en.tags_held, dataset_en.words_held, 'V')
+    #English supervised model with Viterbi
+    #Second parameter is a length of test data, max. 40000
+    supervised_model(dataset_en, 40000, 'EN')
 
-    supervised_model = HMMModel(dataset_cz.text_train, dataset_cz.words_train, dataset_cz.text_held, dataset_cz.tags_train, dataset_cz.words_train, dataset_cz.tags_held, dataset_cz.words_held, 'V')
-    #unsupervised_model = HMMModel(dataset_en.supervised_train, dataset_en.unsupervised_train, dataset_en.text_held, dataset_en.supervised_tags_train, dataset_en.supervised_words_train, dataset_en.tags_held, dataset_en.words_held, 'BW')
+    #English unsupervised model with Baum-Welch and Viterbi
 
-    #unsupervised_model = HMMModel(dataset_cz.supervised_train, dataset_cz.unsupervised_train, dataset_cz.text_held, dataset_cz.supervised_tags_train, dataset_cz.supervised_words_train, dataset_cz.tags_held, dataset_cz.words_held, 'BW')
+    unsupervised_model(dataset_en, 40000, 'EN')
 
-    wordtest = dataset_cz.words_test[20000:30000]
-    tagtest = dataset_cz.tags_test[20000:30000]
-    #bestpath1 = supervised_model.np_viterbi(wordtest)
-    bestpath2 = supervised_model.pruned_viterbi(wordtest)
+    #Czech supervised model with Viterbi
+    #Second parameter is a length of test data, max. 40000. Better to choose small length for czech text, because Viterbi takes ong time even after pruning
+    supervised_model(dataset_cz, 1000, 'CZ')
 
-    #count = 0
+    #Czech unsupervised model with Baum-Welch and Viterbi
 
-    #for i in range(0, len(bestpath1)):
-    #    if bestpath1[i] == tagtest[i]:
-    #        count += 1
-
-    #print(count/len(dataset_en.tags_test[:100]))
-
-    count = 0
-
-    for i in range(0, len(bestpath2)):
-        if bestpath2[i] == tagtest[i]:
-            count += 1
-
-    print(count/len(dataset_cz.tags_test[20000:30000]))
-
-
-
-    #tagged = viterbi(test, smoothed_transition_probabilities, all_emissions, tagset, known_words)
-    #smoothed_emission_probabilities = smoothed_emission_probs(all_emissions, t_unigram_prob, lambdas_emission)
-    
-    print("end")
+    unsupervised_model(dataset_cz, 1000, 'CZ')
 
 if __name__ == "__main__":
     main()
