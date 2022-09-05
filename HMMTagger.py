@@ -1,11 +1,6 @@
-from collections import deque
-import math
-import pathlib
-import random
 import os
 import sys
 from HMMmodel import HMMModel
-from HMMModel2 import HMMModel as HMMModell
 
 class Dataset:
     def __init__(self, training, testing, heldout):
@@ -69,12 +64,12 @@ def data_split(text):
 
     return training, testing, heldout
 
-def supervised_model(dataset, test_size, language):
+def supervised_model(dataset, test_start, test_end, language):
     #Create supervised HMM model
     supervised_model = HMMModel(dataset.text_train, dataset.words_train, dataset.tags_train, dataset.words_train, dataset.tags_held, dataset.words_held, language, 'V')
 
-    wordtest = dataset.words_test[:test_size]
-    tagtest = dataset.tags_test[:test_size]
+    wordtest = dataset.words_test[test_start:test_end]
+    tagtest = dataset.tags_test[test_start:test_end]
     best_path = supervised_model.pruned_viterbi(wordtest)
 
     count = 0
@@ -82,14 +77,15 @@ def supervised_model(dataset, test_size, language):
     for i in range(0, len(best_path)):
         if best_path[i] == tagtest[i]:
             count += 1
-
+    
+    print(f'Supervised accuracy {language} :')
     print(count/len(tagtest))
 
-def unsupervised_model(dataset, test_size, language):
+def unsupervised_model(dataset, test_start, test_end, language):
     unsupervised_model = HMMModel(dataset.supervised_train, dataset.unsupervised_train, dataset.supervised_tags_train, dataset.supervised_words_train, dataset.tags_held, dataset.words_held, language, 'BW')
 
-    wordtest = dataset.words_test[:test_size]
-    tagtest = dataset.tags_test[:test_size]
+    wordtest = dataset.words_test[test_start:test_end]
+    tagtest = dataset.tags_test[test_start:test_end]
     best_path = unsupervised_model.pruned_viterbi(wordtest)
 
     count = 0
@@ -98,10 +94,11 @@ def unsupervised_model(dataset, test_size, language):
         if best_path[i] == tagtest[i]:
             count += 1
 
+    print(f'Unsupervised accuracy {language} :')
     print(count/len(tagtest))
 
 def main():
-    # Create lists from files
+    # Create datasets from files
     with open(os.path.join(sys.path[0], "TEXTEN2.ptg.txt"), "r") as ff:
         english = ff.readlines()
     training_en, testing_en, heldout_en = data_split(english)
@@ -114,21 +111,22 @@ def main():
     
     dataset_cz = Dataset(training_cz, testing_cz, heldout_cz)
 
-    #English supervised model with Viterbi
-    #Second parameter is a length of test data, max. 40000
-    supervised_model(dataset_en, 40000, 'EN')
+    # English supervised model with Viterbi
+    # Second and third parameters are beginning and end of test sequence, max. 40000
+    supervised_model(dataset_en, 0, 40000, 'EN')
 
-    #English unsupervised model with Baum-Welch and Viterbi
+    # English unsupervised model with Baum-Welch and Viterbi
 
-    unsupervised_model(dataset_en, 40000, 'EN')
+    unsupervised_model(dataset_en, 0, 40000, 'EN')
 
-    #Czech supervised model with Viterbi
-    #Second parameter is a length of test data, max. 40000. Better to choose small length for czech text, because Viterbi takes ong time even after pruning
-    supervised_model(dataset_cz, 1000, 'CZ')
+    # Czech supervised model with Viterbi
+    # Second and third parameters are beginning and end of test sequence, max. 40000. 
+    # Better to choose small length for czech text, because Viterbi takes long time even after pruning (it shows approximately same accuracy)
+    supervised_model(dataset_cz, 0, 1000, 'CZ')
 
-    #Czech unsupervised model with Baum-Welch and Viterbi
+    # Czech unsupervised model with Baum-Welch and Viterbi
 
-    unsupervised_model(dataset_cz, 1000, 'CZ')
+    unsupervised_model(dataset_cz, 0, 1000, 'CZ')
 
 if __name__ == "__main__":
     main()
